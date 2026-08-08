@@ -59,7 +59,7 @@ export const API_RESPONSE = {
       statusCode: 201,
       success: true,
       message: "Registration successful",
-    },
+    }, 
 
     EMAIL_SENT: {
       statusCode: 200,

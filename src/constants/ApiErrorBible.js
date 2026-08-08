@@ -70,10 +70,10 @@ export const API_ERROR = {
       message: "User Not Found",
     },
 
-    EMAIL_ALREADY_EXISTS: {
+    ALREADY_EXISTS: {
       statusCode: 409,
       success: false,
-      message: "Email Already Exists",
+      message: "User Already Exists with this email or username ",
     },
 
     INVALID_CREDENTIALS: {
@@ -94,6 +94,12 @@ export const API_ERROR = {
       statusCode: 415,
       success: false,
       message: "Unsupported File Type",
+    },
+
+    Upload_Failed: {
+      statusCode: 500,
+      success: false,
+      message: "Failed at Upload",
     },
   },
 

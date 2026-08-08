@@ -7,9 +7,10 @@ class Apiresponse {
   }
 }
 
-const ApiResponseObject = {
+const ApiresponseObject = {
   SendResponse(config) {
-    return new ApiResponse(config);
+    // console.log(config ,"this from api response ❗")
+    return new Apiresponse(config);
   },
 };
 
