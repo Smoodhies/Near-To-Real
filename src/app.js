@@ -30,7 +30,9 @@ DB_Connection().then(
 
 
 import userRoute from "./routes/user.routes.js"
-
+import uploadRoute from "./routes/uploader.routes.js"
 app.use("/user", userRoute);
+
+app.use("/api/upload", uploadRoute);
 
 export { app };
