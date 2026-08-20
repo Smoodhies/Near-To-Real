@@ -6,9 +6,11 @@
   "author": "",
   "type": "module",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+"scripts": {
+    "dev": "nodemon src/index.js",
+    "local": "node src/index.js",
+    "test": "node --test"
+},
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1112.0",
     "@aws-sdk/client-sqs": "^3.1112.0",
@@ -18,5 +20,6 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+
   }
 }
