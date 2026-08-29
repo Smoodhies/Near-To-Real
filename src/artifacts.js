@@ -1,14 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 
 export class ArtifactManager {
   constructor({ outputDirectory }) {
+    if (!outputDirectory) {
+      throw new Error("ArtifactManager requires outputDirectory");
+    }
+
     this.outputDirectory = outputDirectory;
   }
 
-  async createJob() {
-    const jobId = randomUUID();
+  async createJob(jobId) {
+    if (!jobId) {
+      throw new Error("ArtifactManager.createJob requires jobId");
+    }
 
     const directory = path.join(this.outputDirectory, jobId);
 

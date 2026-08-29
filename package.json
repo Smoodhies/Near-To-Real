@@ -1,25 +1,33 @@
 {
   "name": "n2r_mediaprocessing",
   "version": "1.0.0",
-  "description": "",
+  "description": "Near2Real media processing service",
   "license": "ISC",
-  "author": "",
+  "author": "liyakat",
   "type": "module",
   "main": "index.js",
-"scripts": {
+  "scripts": {
     "dev": "nodemon src/index.js",
     "local": "node src/index.js",
+    "api": "node src/api/routes/index.js",
+    "dev:api": "nodemon src/api/routes/index.js",
+    "worker": "node src/worker/index.js",
+    "dev:worker": "nodemon src/worker/index.js",
     "test": "node --test"
-},
+  },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1112.0",
-    "@aws-sdk/client-sqs": "^3.1112.0",
+    "@aws-sdk/client-s3": "^3.1120.0",
+    "@aws-sdk/client-sqs": "^3.1120.0",
+    "@aws-sdk/lib-storage": "^3.1120.0",
+    "@aws-sdk/s3-request-presigner": "^3.1120.0",
+    "@fastify/rate-limit": "^11.2.0",
     "dotenv": "^17.4.2",
-    "prettier": "^3.9.6",
+    "fastify": "^5.6.0",
+    "mongoose": "^9.9.4",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
-
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.6"
   }
 }
