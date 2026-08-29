@@ -46,6 +46,11 @@ const MediaAssetSchema = new mongoose.Schema(
       default: "UPLOADING",
       index: true,
     },
+    processingJobId: {
+      type: String,
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,
