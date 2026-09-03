@@ -15,6 +15,12 @@ const MediaJobSchema = new mongoose.Schema(
       index: true,
     },
 
+    clientId: {
+      type: String,
+      default: null,
+      index: true,
+    },
+
     source: {
       bucket: {
         type: String,
@@ -39,23 +45,18 @@ const MediaJobSchema = new mongoose.Schema(
 
     status: {
       type: String,
-
       enum: ["QUEUED", "PROCESSING", "COMPLETED", "FAILED"],
-
       default: "QUEUED",
-
       index: true,
     },
 
     options: {
       type: mongoose.Schema.Types.Mixed,
-
       default: {},
     },
 
     metadata: {
       type: mongoose.Schema.Types.Mixed,
-
       default: {},
     },
 
@@ -74,6 +75,52 @@ const MediaJobSchema = new mongoose.Schema(
         type: String,
         default: null,
       },
+
+      code: {
+        type: String,
+        default: null,
+      },
+
+      retryable: {
+        type: Boolean,
+        default: true,
+      },
+
+      attempt: {
+        type: Number,
+        default: 0,
+      },
+    },
+
+    /*
+     * Number of actual worker processing attempts.
+     */
+    attemptCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+      index: true,
+    },
+
+    /*
+     * Maximum number of application-level attempts.
+     */
+    maxAttempts: {
+      type: Number,
+      default: 3,
+      min: 1,
+    },
+
+    /*
+     * Last time a worker successfully claimed the job.
+     *
+     * Used to recover jobs stuck in PROCESSING
+     * after worker/API crashes.
+     */
+    processingLeaseAt: {
+      type: Date,
+      default: null,
+      index: true,
     },
 
     startedAt: {
@@ -85,12 +132,30 @@ const MediaJobSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-  },
 
+    trigger: {
+      type: String,
+      enum: ["API", "S3_EVENT"],
+      default: "API",
+      index: true,
+    },
+
+    idempotencyKey: {
+      type: String,
+      default: null,
+      index: true,
+    },
+  },
   {
     timestamps: true,
   }
 );
+
+/*
+ * --------------------------------------------------
+ * ASSET + STATUS
+ * --------------------------------------------------
+ */
 
 MediaJobSchema.index({
   assetId: 1,
@@ -98,22 +163,82 @@ MediaJobSchema.index({
 });
 
 /*
- * Same asset + same source object
- * should not create multiple active jobs.
+ * --------------------------------------------------
+ * SOURCE LOOKUP
+ * --------------------------------------------------
  */
+
+MediaJobSchema.index({
+  assetId: 1,
+  "source.objectKey": 1,
+});
+
+/*
+ * --------------------------------------------------
+ * SOURCE + STATUS
+ * --------------------------------------------------
+ *
+ * Important for S3-event duplicate detection.
+ */
+
+MediaJobSchema.index({
+  "source.objectKey": 1,
+  status: 1,
+});
+
+/*
+ * --------------------------------------------------
+ * API IDEMPOTENCY
+ * --------------------------------------------------
+ */
+
 MediaJobSchema.index(
   {
-    assetId: 1,
-    "source.objectKey": 1,
+    trigger: 1,
+    idempotencyKey: 1,
   },
   {
     unique: true,
     partialFilterExpression: {
-      status: {
-        $in: ["QUEUED", "PROCESSING", "COMPLETED"],
+      trigger: "API",
+      idempotencyKey: {
+        $type: "string",
       },
     },
   }
 );
+
+/*
+ * --------------------------------------------------
+ * CLIENT + JOB
+ * --------------------------------------------------
+ */
+
+MediaJobSchema.index({
+  clientId: 1,
+  jobId: 1,
+});
+
+/*
+ * --------------------------------------------------
+ * CLIENT + STATUS
+ * --------------------------------------------------
+ */
+
+MediaJobSchema.index({
+  clientId: 1,
+  status: 1,
+});
+
+/*
+ * --------------------------------------------------
+ * PROCESSING LEASE
+ * --------------------------------------------------
+ */
+
+MediaJobSchema.index({
+  status: 1,
+  processingLeaseAt: 1,
+});
 
 export default mongoose.models.MediaJob || mongoose.model("MediaJob", MediaJobSchema);

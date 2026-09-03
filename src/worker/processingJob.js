@@ -16,6 +16,19 @@ export class ProcessingJob {
 
     this.metadata = metadata;
 
+    /*
+     * --------------------------------------------------
+     * PROCESSING TIER
+     * --------------------------------------------------
+     *
+     * This metadata is ready for the future
+     * separate FREE/PAID queue architecture.
+     */
+
+    this.tier = metadata?.tier === "PAID" ? "PAID" : "FREE";
+
+    this.priority = metadata?.priority ?? (this.tier === "PAID" ? "HIGH" : "NORMAL");
+
     this.status = "PENDING";
 
     this.createdAt = new Date().toISOString();

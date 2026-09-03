@@ -12,14 +12,18 @@
     "api": "node src/api/routes/index.js",
     "dev:api": "nodemon src/api/routes/index.js",
     "worker": "node src/worker/index.js",
+    "test": "node --test",
     "dev:worker": "nodemon src/worker/index.js",
-    "test": "node --test"
+    "loadtest": "node --env-file=.env.loadtest scripts/load-test.js",
+    "loadtest:baseline": "node --env-file=.env.loadtest scripts/load-test.js",
+    "video-test": "node --env-file=.env.loadtest.video scripts/video-load-test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1120.0",
     "@aws-sdk/client-sqs": "^3.1120.0",
     "@aws-sdk/lib-storage": "^3.1120.0",
     "@aws-sdk/s3-request-presigner": "^3.1120.0",
+    "@fastify/multipart": "^10.1.1",
     "@fastify/rate-limit": "^11.2.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.6.0",
@@ -27,6 +31,7 @@
     "uuid": "^14.0.1"
   },
   "devDependencies": {
+    "autocannon": "^8.0.0",
     "nodemon": "^3.1.14",
     "prettier": "^3.9.6"
   }

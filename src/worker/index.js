@@ -16,30 +16,80 @@ import { JobWorkspace } from "./jobWorkerSpace.js";
 
 const config = new Config().validate();
 
+/*
+ * --------------------------------------------------
+ * MONGODB
+ * --------------------------------------------------
+ */
+
 await connectMongo();
+
+/*
+ * --------------------------------------------------
+ * WORKSPACE
+ * --------------------------------------------------
+ */
 
 const workspace = new JobWorkspace({
   rootDirectory: config.paths.workspace,
 });
 
+/*
+ * --------------------------------------------------
+ * S3
+ * --------------------------------------------------
+ */
+
 const storage = new S3StorageService({
   region: config.aws.region,
 });
+
+/*
+ * --------------------------------------------------
+ * ASSET VERIFICATION
+ * --------------------------------------------------
+ */
 
 const assetVerification = new AssetVerificationService({
   storage,
 });
 
+/*
+ * --------------------------------------------------
+ * MEDIA WORKER
+ * --------------------------------------------------
+ *
+ * createMediaWorker now receives:
+ *
+ * - maxAttempts
+ * - processingLeaseTimeoutMs
+ *
+ * through the validated Config object.
+ */
+
 const worker = createMediaWorker({
   workspace,
+
   config,
 });
+
+/*
+ * --------------------------------------------------
+ * SQS
+ * --------------------------------------------------
+ */
 
 const queueService = new SqsQueueService({
   region: config.aws.region,
 
   queueUrl: config.aws.sqsQueueUrl,
 });
+
+/*
+ * --------------------------------------------------
+ * SQS CONSUMER
+ * --------------------------------------------------
+ */
 
 const consumer = new SqsConsumer({
   queueService,
@@ -57,7 +107,21 @@ const consumer = new SqsConsumer({
   visibilityTimeout: config.worker.sqsVisibilityTimeout,
 });
 
+/*
+ * --------------------------------------------------
+ * GRACEFUL SHUTDOWN
+ * --------------------------------------------------
+ */
+
+let shuttingDown = false;
+
 const shutdown = () => {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+
   console.log("Stopping SQS consumer...");
 
   consumer.stop();
@@ -66,5 +130,11 @@ const shutdown = () => {
 process.on("SIGINT", shutdown);
 
 process.on("SIGTERM", shutdown);
+
+/*
+ * --------------------------------------------------
+ * START CONSUMER
+ * --------------------------------------------------
+ */
 
 await consumer.start();

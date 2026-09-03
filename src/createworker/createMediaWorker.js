@@ -18,6 +18,11 @@ export function createMediaWorker({ workspace, config } = {}) {
 
   return new MediaWorker({
     processor,
+
     workspace: jobWorkspace,
+
+    maxAttempts: resolvedConfig.worker.maxAttempts,
+
+    processingLeaseTimeoutMs: resolvedConfig.worker.processingLeaseTimeoutMs,
   });
 }

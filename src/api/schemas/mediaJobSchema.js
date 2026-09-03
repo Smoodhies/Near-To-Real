@@ -4,47 +4,15 @@ export const createMediaJobSchema = {
 
     additionalProperties: false,
 
-    required: ["source"],
+    required: ["assetId"],
 
     properties: {
-      source: {
-        type: "object",
+      assetId: {
+        type: "string",
 
-        additionalProperties: false,
+        minLength: 1,
 
-        required: ["type"],
-
-        properties: {
-          type: {
-            type: "string",
-
-            enum: ["local", "s3"],
-          },
-
-          path: {
-            type: "string",
-
-            minLength: 1,
-
-            maxLength: 2048,
-          },
-
-          bucket: {
-            type: "string",
-
-            minLength: 3,
-
-            maxLength: 255,
-          },
-
-          key: {
-            type: "string",
-
-            minLength: 1,
-
-            maxLength: 1024,
-          },
-        },
+        maxLength: 128,
       },
 
       options: {

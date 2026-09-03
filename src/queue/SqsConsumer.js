@@ -1,7 +1,5 @@
 import { ProcessingJob } from "../worker/processingJob.js";
-
 import { S3EventParser } from "./S3EventParser.js";
-
 import MediaJob from "../models/MediaJob.js";
 
 export class SqsConsumer {
@@ -39,24 +37,21 @@ export class SqsConsumer {
       throw new Error("SqsConsumer concurrency must be >= 1");
     }
 
+    if (!Number.isInteger(visibilityTimeout) || visibilityTimeout < 30) {
+      throw new Error("visibilityTimeout must be >= 30 seconds");
+    }
+
     this.queueService = queueService;
-
     this.worker = worker;
-
     this.storage = storage;
-
     this.workspace = workspace;
-
     this.assetVerification = assetVerification;
-
     this.parser = parser;
 
     this.concurrency = concurrency;
-
     this.visibilityTimeout = visibilityTimeout;
 
     this.running = false;
-
     this.activeJobs = 0;
   }
 
@@ -87,7 +82,7 @@ export class SqsConsumer {
           visibilityTimeout: this.visibilityTimeout,
         });
 
-        if (messages.length === 0) {
+        if (!messages?.length) {
           continue;
         }
 
@@ -100,7 +95,7 @@ export class SqsConsumer {
 
           this.#handleMessage(message)
             .catch((error) => {
-              console.error("Unhandled message error:", error);
+              console.error("Unhandled SQS message error:", error);
             })
             .finally(() => {
               this.activeJobs--;
@@ -129,8 +124,14 @@ export class SqsConsumer {
 
     try {
       body = JSON.parse(message.Body);
-    } catch {
-      console.error("Invalid SQS JSON");
+    } catch (error) {
+      /*
+       * Invalid JSON can never succeed.
+       *
+       * Delete it so poison messages don't loop forever.
+       */
+
+      console.error("Invalid SQS JSON; deleting poison message.");
 
       await this.queueService.delete(message);
 
@@ -140,6 +141,10 @@ export class SqsConsumer {
     const parsed = this.parser.parse(body);
 
     if (!parsed.accepted) {
+      /*
+       * Parser rejected the event permanently.
+       */
+
       console.log(`Ignoring message: ${parsed.reason}`);
 
       await this.queueService.delete(message);
@@ -148,9 +153,21 @@ export class SqsConsumer {
     }
 
     /*
-     * Every job must succeed before
-     * deleting the SQS message.
+     * --------------------------------------------------
+     * IMPORTANT
+     * --------------------------------------------------
+     *
+     * Message is deleted ONLY after every job succeeds.
+     *
+     * If #processJob throws:
+     *
+     *      no delete
+     *          ↓
+     *      SQS visibility expires
+     *          ↓
+     *      message redelivered
      */
+
     for (const jobData of parsed.jobs) {
       await this.#processJob(jobData);
     }
@@ -165,7 +182,7 @@ export class SqsConsumer {
 
     /*
      * --------------------------------------------------
-     * Verify asset
+     * VERIFY S3 ASSET
      * --------------------------------------------------
      */
 
@@ -176,14 +193,26 @@ export class SqsConsumer {
     });
 
     if (!verification.accepted) {
-      console.error("Rejected S3 processing event:", verification);
+      /*
+       * These can be transient.
+       *
+       * Do NOT delete the SQS message.
+       */
+
+      if (["INVALID_ASSET_STATUS", "ASSET_NOT_FOUND"].includes(verification.reason)) {
+        throw new Error(`Temporary asset verification failure: ${verification.reason}`);
+      }
 
       /*
-       * Invalid/stale event.
-       * Delete message instead of retrying forever.
+       * Other parser/verification failures are treated
+       * as permanently rejected S3 events.
        */
+
+      console.error("Rejected S3 processing event:", verification);
+
       return {
         accepted: false,
+
         reason: verification.reason,
       };
     }
@@ -192,126 +221,250 @@ export class SqsConsumer {
 
     const assetId = asset.assetId;
 
+    const trigger = jobData.trigger === "API" ? "API" : "S3_EVENT";
+
+    let job;
+
     /*
-     * --------------------------------------------------
-     * ATOMIC JOB CLAIM
-     * --------------------------------------------------
+     * ==================================================
+     * EXISTING JOB LOOKUP
+     * ==================================================
      *
-     * This is the important part.
+     * IMPORTANT:
      *
-     * Two workers can receive the same event.
+     * Include FAILED.
      *
-     * Only one can create/claim the job.
+     * Otherwise a retry can create a brand-new S3_EVENT
+     * job instead of retrying the original job.
      */
 
     const existingJob = await MediaJob.findOne({
       assetId,
 
       "source.objectKey": jobData.source.key,
-
-      status: {
-        $in: ["QUEUED", "PROCESSING", "COMPLETED"],
-      },
-    });
-
-    if (existingJob) {
-      console.log("Duplicate processing event ignored:", {
-        assetId,
-        jobId: existingJob.jobId,
-        status: existingJob.status,
-      });
-
-      return {
-        accepted: false,
-        reason: "JOB_ALREADY_EXISTS",
-        jobId: existingJob.jobId,
-      };
-    }
+    })
+      .sort({
+        createdAt: -1,
+      })
+      .lean();
 
     /*
-     * Create a unique job.
-     *
-     * jobId is generated ONCE.
+     * ==================================================
+     * API JOB EXISTS
+     * ==================================================
      */
 
-    const job = new ProcessingJob({
-      assetId,
-
-      source: {
-        type: "s3",
-
-        bucket: jobData.source.bucket,
-
-        key: jobData.source.key,
-      },
-
-      options: jobData.options ?? {},
-
-      metadata: {
-        ...(jobData.metadata ?? {}),
-
-        verified: true,
-
-        verifiedAt: new Date().toISOString(),
-      },
-    });
-
-    try {
-      await MediaJob.create({
-        jobId: job.jobId,
-
-        assetId,
-
-        source: {
-          bucket: asset.bucket,
-
-          objectKey: asset.objectKey,
-
-          etag: asset.etag,
-
-          size: asset.size,
-        },
-
-        status: "QUEUED",
-
-        options: job.options,
-
-        metadata: job.metadata,
-      });
-    } catch (error) {
+    if (existingJob && existingJob.trigger === "API") {
       /*
-       * Another worker may have won the race.
-       *
-       * Unique jobId protects us from duplicate
-       * job creation by accident, but asset-level
-       * uniqueness should also be enforced below
-       * in the database.
+       * COMPLETED means the S3 event is duplicate.
        */
 
-      if (error?.code === 11000) {
-        console.log("Duplicate job creation race ignored:", assetId);
+      if (existingJob.status === "COMPLETED") {
+        console.log("Duplicate S3 event for completed API job:", {
+          jobId: existingJob.jobId,
+          assetId,
+        });
 
         return {
           accepted: false,
-          reason: "JOB_ALREADY_EXISTS",
+
+          reason: "JOB_ALREADY_COMPLETED",
+
+          jobId: existingJob.jobId,
         };
       }
 
-      throw error;
+      /*
+       * PROCESSING:
+       *
+       * Pass it to MediaWorker.
+       *
+       * MediaWorker itself performs the atomic claim.
+       *
+       * If another worker owns it, it will throw and SQS
+       * will retry later.
+       */
+
+      console.log("Processing API job from S3 event:", {
+        jobId: existingJob.jobId,
+
+        assetId,
+
+        status: existingJob.status,
+
+        tier: existingJob.metadata?.tier ?? "FREE",
+      });
+
+      job = this.#toProcessingJob(existingJob);
     }
 
-    console.log("Creating processing job:", {
-      jobId: job.jobId,
+    /*
+     * ==================================================
+     * EXISTING S3 EVENT JOB
+     * ==================================================
+     */
+    else if (existingJob && existingJob.trigger === "S3_EVENT") {
+      if (existingJob.status === "COMPLETED") {
+        console.log("Duplicate S3 event ignored:", {
+          assetId,
 
-      assetId,
-    });
+          jobId: existingJob.jobId,
+        });
+
+        return {
+          accepted: false,
+
+          reason: "JOB_ALREADY_COMPLETED",
+
+          jobId: existingJob.jobId,
+        };
+      }
+
+      /*
+       * QUEUED / PROCESSING / FAILED:
+       *
+       * Reuse the same job.
+       *
+       * This is the critical retry fix.
+       */
+
+      console.log("Reusing existing S3_EVENT job:", {
+        jobId: existingJob.jobId,
+
+        assetId,
+
+        status: existingJob.status,
+      });
+
+      job = this.#toProcessingJob(existingJob);
+    }
+
+    /*
+     * ==================================================
+     * NO EXISTING JOB
+     * ==================================================
+     */
+    else {
+      job = new ProcessingJob({
+        assetId,
+
+        source: {
+          type: "s3",
+
+          bucket: jobData.source.bucket,
+
+          key: jobData.source.key,
+        },
+
+        options: jobData.options ?? {},
+
+        metadata: {
+          ...(jobData.metadata ?? {}),
+
+          source: "s3-event",
+
+          tier: "FREE",
+
+          priority: "NORMAL",
+
+          verified: true,
+
+          verifiedAt: new Date().toISOString(),
+        },
+      });
+
+      try {
+        await MediaJob.create({
+          jobId: job.jobId,
+
+          assetId,
+
+          clientId: null,
+
+          source: {
+            bucket: asset.bucket,
+
+            objectKey: asset.objectKey,
+
+            etag: asset.etag,
+
+            size: asset.size,
+          },
+
+          status: "QUEUED",
+
+          options: job.options,
+
+          metadata: job.metadata,
+
+          trigger: "S3_EVENT",
+
+          attemptCount: 0,
+
+          maxAttempts: this.worker.maxAttempts ?? 3,
+        });
+      } catch (error) {
+        /*
+         * Another worker may have created the job
+         * between findOne() and create().
+         */
+
+        if (error?.code === 11000) {
+          const racedJob = await MediaJob.findOne({
+            assetId,
+
+            "source.objectKey": asset.objectKey,
+          })
+            .sort({
+              createdAt: -1,
+            })
+            .lean();
+
+          if (!racedJob) {
+            throw error;
+          }
+
+          if (racedJob.status === "COMPLETED") {
+            return {
+              accepted: false,
+
+              reason: "JOB_ALREADY_COMPLETED",
+
+              jobId: racedJob.jobId,
+            };
+          }
+
+          console.log("Duplicate S3 job creation race resolved:", {
+            assetId,
+
+            jobId: racedJob.jobId,
+          });
+
+          job = this.#toProcessingJob(racedJob);
+        } else {
+          throw error;
+        }
+      }
+
+      console.log("Created S3 event processing job:", {
+        jobId: job.jobId,
+
+        assetId,
+      });
+    }
+
+    /*
+     * --------------------------------------------------
+     * CREATE WORKSPACE
+     * --------------------------------------------------
+     */
 
     const workspace = await this.workspace.create(job.jobId);
 
     try {
       /*
        * ------------------------------------------------
-       * Download input
+       * DOWNLOAD INPUT
        * ------------------------------------------------
        */
 
@@ -320,14 +473,14 @@ export class SqsConsumer {
 
         key: job.source.key,
 
-        destination: `${workspace.root}/input${this.#extension(job.source.key)}`,
+        destination: `${workspace.root}/input` + `${this.#extension(job.source.key)}`,
       });
 
       console.log("Downloaded source:", downloaded.path);
 
       /*
        * ------------------------------------------------
-       * Switch same job S3 → local
+       * LOCAL SOURCE
        * ------------------------------------------------
        */
 
@@ -351,7 +504,7 @@ export class SqsConsumer {
 
       /*
        * ------------------------------------------------
-       * Worker
+       * PROCESS
        * ------------------------------------------------
        */
 
@@ -364,7 +517,9 @@ export class SqsConsumer {
       });
 
       /*
-       * Workspace is temporary.
+       * ------------------------------------------------
+       * CLEAN WORKSPACE
+       * ------------------------------------------------
        */
 
       await this.workspace.cleanup(workspace.root);
@@ -373,13 +528,7 @@ export class SqsConsumer {
 
       return result;
     } catch (error) {
-      console.error(`Processing failed: ${job.jobId}`, error);
-
-      /*
-       * Do NOT delete SQS message.
-       *
-       * SQS will retry it.
-       */
+      console.error(`Processing failed/retry scheduled: ${job.jobId}`, error);
 
       try {
         await this.workspace.cleanup(workspace.root);
@@ -387,8 +536,36 @@ export class SqsConsumer {
         console.error("Workspace cleanup failed:", cleanupError);
       }
 
+      /*
+       * IMPORTANT:
+       *
+       * Throw.
+       *
+       * SQS message must NOT be deleted.
+       */
+
       throw error;
     }
+  }
+
+  #toProcessingJob(mediaJob) {
+    return new ProcessingJob({
+      jobId: mediaJob.jobId,
+
+      assetId: mediaJob.assetId,
+
+      source: {
+        type: "s3",
+
+        bucket: mediaJob.source.bucket,
+
+        key: mediaJob.source.objectKey,
+      },
+
+      options: mediaJob.options ?? {},
+
+      metadata: mediaJob.metadata ?? {},
+    });
   }
 
   #extension(key) {
