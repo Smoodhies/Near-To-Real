@@ -55,6 +55,11 @@ const MediaAssetSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    processingJobId: {
+      type: String,
+      default: null,
+      index: true,
+    },
   },
 
   {
